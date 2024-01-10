@@ -1,16 +1,15 @@
 import asyncio
 import logging
 import signal
+import socket
 import subprocess
 import sys
-import socket
 
 import lastmile_utils.lib.core.api as core_utils
 import result
-from result import Err, Ok, Result
 from aiconfig.editor.server.server import run_backend_server
-
 from aiconfig.editor.server.server_utils import EditServerConfig, ServerMode
+from result import Err, Ok, Result
 
 
 class AIConfigCLIConfig(core_utils.Record):
@@ -21,7 +20,7 @@ logging.basicConfig(format=core_utils.LOGGER_FMT)
 LOGGER = logging.getLogger(__name__)
 
 
-async def main(argv: list[str]) -> int:
+async def main_with_args(argv: list[str]) -> int:
     final_result = run_subcommand(argv)
     match final_result:
         case Ok(msg):
@@ -65,19 +64,19 @@ def _sigint(procs: list[subprocess.Popen[bytes]]) -> Result[str, str]:
         p.send_signal(signal.SIGINT)
     return Ok("Sent SIGINT to frontend servers.")
 
+
 def is_port_in_use(port: int) -> bool:
-    """ 
+    """
     Checks if a port is in use at localhost.
-    
+
     Creates a temporary connection.
     Context manager will automatically close the connection
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(('localhost', port)) == 0
+        return s.connect_ex(("localhost", port)) == 0
 
 
 def _run_editor_servers(edit_config: EditServerConfig) -> Result[list[str], str]:
-    
     port = edit_config.server_port
 
     while is_port_in_use(port):
@@ -142,6 +141,12 @@ def _run_frontend_server_background() -> Result[list[subprocess.Popen[bytes]], s
     return Ok([p1, p2])
 
 
+def main() -> int:
+    print("Running main")
+    argv = sys.argv
+    return asyncio.run(main_with_args(argv))
+
+
 if __name__ == "__main__":
-    retcode: int = asyncio.run(main(sys.argv))
+    retcode: int = main()
     sys.exit(retcode)

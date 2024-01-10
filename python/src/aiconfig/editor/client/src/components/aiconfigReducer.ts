@@ -1,6 +1,6 @@
 import { ClientAIConfig, ClientPrompt } from "../shared/types";
 import { getPromptModelName } from "../utils/promptUtils";
-import { AIConfig, JSONObject, PromptInput } from "aiconfig";
+import { AIConfig, JSONObject, Output, PromptInput } from "aiconfig";
 
 export type AIConfigReducerAction =
   | MutateAIConfigAction
@@ -10,10 +10,12 @@ export type AIConfigReducerAction =
 
 export type MutateAIConfigAction =
   | AddPromptAction
+  | ClearOutputsAction
   | DeletePromptAction
   | RunPromptAction
   | SetDescriptionAction
   | SetNameAction
+  | StreamOutputChunkAction
   | UpdatePromptInputAction
   | UpdatePromptNameAction
   | UpdatePromptModelAction
@@ -33,6 +35,10 @@ export type AddPromptAction = {
   prompt: ClientPrompt;
 };
 
+export type ClearOutputsAction = {
+  type: "CLEAR_OUTPUTS";
+};
+
 export type DeletePromptAction = {
   type: "DELETE_PROMPT";
   id: string;
@@ -41,6 +47,8 @@ export type DeletePromptAction = {
 export type RunPromptAction = {
   type: "RUN_PROMPT";
   id: string;
+  cancellationToken?: string;
+  isRunning?: boolean;
 };
 
 export type RunPromptErrorAction = {
@@ -61,6 +69,12 @@ export type SetDescriptionAction = {
 export type SetNameAction = {
   type: "SET_NAME";
   name: string;
+};
+
+export type StreamOutputChunkAction = {
+  type: "STREAM_OUTPUT_CHUNK";
+  id: string;
+  output: Output;
 };
 
 export type UpdatePromptInputAction = {
@@ -178,7 +192,7 @@ function reduceConsolidateAIConfig(
           ...prompt,
           _ui: {
             ...prompt._ui,
-            isRunning: false,
+            isRunning: action.isRunning ?? false,
           },
           outputs,
         };
@@ -208,6 +222,29 @@ export default function aiconfigReducer(
     case "ADD_PROMPT_AT_INDEX": {
       return reduceInsertPromptAtIndex(dirtyState, action.index, action.prompt);
     }
+    case "CLEAR_OUTPUTS": {
+      const prompts = state.prompts.map((prompt) => {
+        if (prompt.outputs) {
+          return {
+             ...prompt,
+              outputs: undefined
+           }
+        } else {
+          return prompt;
+        }
+      });
+
+
+    for (const prompt of prompts) {
+      if (prompt.outputs) {
+        delete prompt.outputs;
+    }}
+
+      return {
+        ...dirtyState,
+        prompts,
+      };
+    }
     case "DELETE_PROMPT": {
       return {
         ...dirtyState,
@@ -221,6 +258,7 @@ export default function aiconfigReducer(
         ...prompt,
         _ui: {
           ...prompt._ui,
+          cancellationToken: action.cancellationToken,
           isRunning: true,
         },
       }));
@@ -232,6 +270,14 @@ export default function aiconfigReducer(
           ...prompt._ui,
           isRunning: false,
         },
+        outputs: [
+          {
+            output_type: "error",
+            ename: "Error",
+            evalue: action.message ?? "Error running prompt",
+            traceback: [],
+          },
+        ],
       }));
     }
     case "SAVE_CONFIG_SUCCESS": {
@@ -254,6 +300,12 @@ export default function aiconfigReducer(
         ...dirtyState,
         name: action.name,
       };
+    }
+    case "STREAM_OUTPUT_CHUNK": {
+      return reduceReplacePrompt(dirtyState, action.id, (prompt) => ({
+        ...prompt,
+        outputs: [action.output],
+      }));
     }
     case "UPDATE_PROMPT_INPUT": {
       return reduceReplaceInput(dirtyState, action.id, () => action.input);

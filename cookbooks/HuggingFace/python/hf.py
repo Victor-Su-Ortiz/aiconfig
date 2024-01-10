@@ -3,10 +3,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 # HuggingFace API imports
 from huggingface_hub import InferenceClient
-from huggingface_hub.inference._text_generation import (
-    TextGenerationResponse,
-    TextGenerationStreamResponse,
-)
+from huggingface_hub.inference._text_generation import TextGenerationResponse, TextGenerationStreamResponse
 
 # ModelParser Utils
 # Type hint imports
@@ -131,7 +128,7 @@ class HuggingFaceTextParser(ParameterizedModelParser):
     A model parser for HuggingFace text generation models.
     """
 
-    def __init__(self, model_id: str = None, use_api_token=False):
+    def __init__(self, model_id: str = None, use_api_token=True):
         """
         Args:
             model_id (str): The model ID of the model to use.
@@ -156,7 +153,9 @@ class HuggingFaceTextParser(ParameterizedModelParser):
         token = None
 
         if use_api_token:
-            token = get_api_key_from_environment("HUGGING_FACE_API_TOKEN")
+            # You are allowed to use Hugging Face for a bit before you get
+            # rate limited, in which case you will receive a clear error
+            token = get_api_key_from_environment("HUGGING_FACE_API_TOKEN", required=False).unwrap()
 
         self.client = InferenceClient(model_id, token=token)
 
@@ -166,14 +165,7 @@ class HuggingFaceTextParser(ParameterizedModelParser):
         """
         return "HuggingFaceTextParser"
 
-    def serialize(
-        self,
-        prompt_name: str,
-        data: Any,
-        ai_config: "AIConfigRuntime",
-        parameters: Optional[Dict] = None,
-        **kwargs
-    ) -> List[Prompt]:
+    def serialize(self, prompt_name: str, data: Any, ai_config: "AIConfigRuntime", parameters: Optional[Dict] = None, **kwargs) -> List[Prompt]:
         """
         Defines how a prompt and model inference settings get serialized in the .aiconfig.
 
@@ -196,9 +188,7 @@ class HuggingFaceTextParser(ParameterizedModelParser):
         prompt = Prompt(
             name=prompt_name,
             input=prompt_input,
-            metadata=PromptMetadata(
-                model=model_metadata, parameters=parameters, **kwargs
-            ),
+            metadata=PromptMetadata(model=model_metadata, parameters=parameters, **kwargs),
         )
         return [prompt]
 
@@ -230,9 +220,7 @@ class HuggingFaceTextParser(ParameterizedModelParser):
 
         return completion_data
 
-    async def run_inference(
-        self, prompt: Prompt, aiconfig, options, parameters
-    ) -> List[Output]:
+    async def run_inference(self, prompt: Prompt, aiconfig, options, parameters) -> List[Output]:
         """
         Invoked to run a prompt in the .aiconfig. This method should perform
         the actual model inference based on the provided prompt and inference settings.
@@ -247,9 +235,7 @@ class HuggingFaceTextParser(ParameterizedModelParser):
         completion_data = await self.deserialize(prompt, aiconfig, options, parameters)
 
         # if stream enabled in runtime options and config, then stream. Otherwise don't stream.
-        stream = (options.stream if options else False) and (
-            not "stream" in completion_data or completion_data.get("stream") != False
-        )
+        stream = (options.stream if options else False) and (not "stream" in completion_data or completion_data.get("stream") != False)
 
         response = self.client.text_generation(**completion_data)
         response_is_detailed = completion_data.get("details", False)

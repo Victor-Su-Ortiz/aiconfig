@@ -5,13 +5,17 @@ import {
   createStyles,
   Stack,
   Flex,
+  Text,
   Tooltip,
+  Alert,
+  Group,
 } from "@mantine/core";
 import { Notifications, showNotification } from "@mantine/notifications";
 import {
   AIConfig,
   InferenceSettings,
   JSONObject,
+  Output,
   Prompt,
   PromptInput,
 } from "aiconfig";
@@ -23,6 +27,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { v4 as uuidv4 } from "uuid";
 import aiconfigReducer, { AIConfigReducerAction } from "./aiconfigReducer";
 import {
   ClientPrompt,
@@ -33,6 +38,7 @@ import {
 import AddPromptButton from "./prompt/AddPromptButton";
 import {
   getDefaultNewPromptName,
+  getModelSettingsStream,
   getPrompt,
 } from "../utils/aiconfigStateUtils";
 import { debounce, uniqueId } from "lodash";
@@ -40,14 +46,51 @@ import PromptMenuButton from "./prompt/PromptMenuButton";
 import GlobalParametersContainer from "./GlobalParametersContainer";
 import AIConfigContext from "./AIConfigContext";
 import ConfigNameDescription from "./ConfigNameDescription";
-import { AUTOSAVE_INTERVAL_MS, DEBOUNCE_MS } from "../utils/constants";
-import { getPromptModelName } from "../utils/promptUtils";
+import {
+  AUTOSAVE_INTERVAL_MS,
+  DEBOUNCE_MS,
+  SERVER_HEARTBEAT_INTERVAL_MS,
+} from "../utils/constants";
+import {
+  getDefaultPromptInputForModel,
+  getPromptModelName,
+} from "../utils/promptUtils";
 import { IconDeviceFloppy } from "@tabler/icons-react";
+import CopyButton from "./CopyButton";
 
 type Props = {
   aiconfig: AIConfig;
   callbacks: AIConfigCallbacks;
 };
+
+export type RunPromptStreamEvent =
+  | {
+      type: "output_chunk";
+      data: Output;
+    }
+  | {
+      type: "aiconfig";
+      data: AIConfig;
+    }
+  | {
+      type: "aiconfig_complete";
+      data: AIConfig;
+    };
+
+export type RunPromptStreamErrorEvent = {
+  type: "error";
+  data: {
+    message: string;
+    code: number;
+    data: AIConfig;
+  };
+};
+
+export type RunPromptStreamCallback = (event: RunPromptStreamEvent) => void;
+
+export type RunPromptStreamErrorCallback = (
+  event: RunPromptStreamErrorEvent
+) => void;
 
 export type AIConfigCallbacks = {
   addPrompt: (
@@ -55,9 +98,18 @@ export type AIConfigCallbacks = {
     prompt: Prompt,
     index: number
   ) => Promise<{ aiconfig: AIConfig }>;
+  clearOutputs: () => Promise<{ aiconfig: AIConfig }>;
   deletePrompt: (promptName: string) => Promise<void>;
   getModels: (search: string) => Promise<string[]>;
-  runPrompt: (promptName: string) => Promise<{ aiconfig: AIConfig }>;
+  getServerStatus?: () => Promise<{ status: "OK" | "ERROR" }>;
+  runPrompt: (
+    promptName: string,
+    onStream: RunPromptStreamCallback,
+    onError: RunPromptStreamErrorCallback,
+    enableStreaming?: boolean,
+    cancellationToken?: string
+  ) => Promise<{ aiconfig: AIConfig }>;
+  cancel: (cancellationToken: string) => Promise<void>;
   save: (aiconfig: AIConfig) => Promise<void>;
   setConfigDescription: (description: string) => Promise<void>;
   setConfigName: (name: string) => Promise<void>;
@@ -110,6 +162,7 @@ export default function EditorContainer({
   callbacks,
 }: Props) {
   const [isSaving, setIsSaving] = useState(false);
+  const [serverStatus, setServerStatus] = useState<"OK" | "ERROR">("OK");
   const [aiconfigState, dispatch] = useReducer(
     aiconfigReducer,
     aiConfigToClientConfig(initialAIConfig)
@@ -299,7 +352,10 @@ export default function EditorContainer({
         if (!statePrompt) {
           throw new Error(`Could not find prompt with id ${promptId}`);
         }
-        const modelName = getPromptModelName(statePrompt);
+        const modelName = getPromptModelName(
+          statePrompt,
+          stateRef.current.metadata.default_model
+        );
         if (!modelName) {
           throw new Error(`Could not find model name for prompt ${promptId}`);
         }
@@ -445,7 +501,7 @@ export default function EditorContainer({
 
       const newPrompt: Prompt = {
         name: promptName,
-        input: "", // TODO: Can we use schema to get input structure, string vs object?
+        input: getDefaultPromptInputForModel(model),
         metadata: {
           model,
         },
@@ -513,12 +569,32 @@ export default function EditorContainer({
     [deletePromptCallback, dispatch]
   );
 
+  const clearOutputsCallback = callbacks.clearOutputs;
+  const onClearOutputs = useCallback(async () => {
+    dispatch({
+      type: "CLEAR_OUTPUTS",
+    });
+    try {
+      await clearOutputsCallback();
+    } catch (err: unknown) {
+      const message = (err as RequestCallbackError).message ?? null;
+      showNotification({
+        title: "Error clearing outputs",
+        message,
+        color: "red",
+      });
+    }
+  }, [clearOutputsCallback, dispatch]);
+
   const runPromptCallback = callbacks.runPrompt;
+
   const onRunPrompt = useCallback(
     async (promptId: string) => {
+      const cancellationToken = uuidv4();
       const action: AIConfigReducerAction = {
         type: "RUN_PROMPT",
         id: promptId,
+        cancellationToken,
       };
 
       dispatch(action);
@@ -528,18 +604,82 @@ export default function EditorContainer({
         if (!statePrompt) {
           throw new Error(`Could not find prompt with id ${promptId}`);
         }
-        const promptName = statePrompt.name;
-        const serverConfigRes = await runPromptCallback(promptName);
 
-        dispatch({
-          type: "CONSOLIDATE_AICONFIG",
-          action,
-          config: serverConfigRes.aiconfig,
-        });
+        const promptName = statePrompt.name;
+        const enableStreaming: boolean | undefined = getModelSettingsStream(
+          statePrompt,
+          stateRef.current
+        );
+
+        const serverConfigResponse = await runPromptCallback(
+          promptName,
+          (event) => {
+            if (event.type === "output_chunk") {
+              dispatch({
+                type: "STREAM_OUTPUT_CHUNK",
+                id: promptId,
+                output: event.data,
+              });
+            } else if (event.type === "aiconfig") {
+              dispatch({
+                type: "CONSOLIDATE_AICONFIG",
+                action: {
+                  ...action,
+                  // Ensure we keep the prompt in a running state since this is an in-progress update
+                  isRunning: true,
+                },
+                config: event.data,
+              });
+            } else if (event.type === "aiconfig_complete") {
+              dispatch({
+                type: "CONSOLIDATE_AICONFIG",
+                action,
+                config: event.data,
+              });
+            }
+          },
+          (event) => {
+            console.log(
+              `Error running prompt ${promptName}: ${JSON.stringify(event)}`
+            );
+            if (event.type === "error") {
+              //throw new Error(event.data.message);
+
+              if (event.data.code === 499) {
+                // This is a cancellation
+                // Reset the aiconfig to the state before we started running the prompt
+                dispatch({
+                  type: "CONSOLIDATE_AICONFIG",
+                  action,
+                  config: event.data.data,
+                });
+
+                const promptName = getPrompt(stateRef.current, promptId)?.name;
+
+                showNotification({
+                  title: `Execution interrupted for prompt${
+                    promptName ? ` ${promptName}` : ""
+                  }. Resetting to previous state.`,
+                  message: event.data.message,
+                  color: "yellow",
+                });
+              }
+            }
+          },
+          enableStreaming,
+          cancellationToken
+        );
+
+        if (serverConfigResponse?.aiconfig) {
+          dispatch({
+            type: "CONSOLIDATE_AICONFIG",
+            action,
+            config: serverConfigResponse?.aiconfig,
+          });
+        }
       } catch (err: unknown) {
         const message = (err as RequestCallbackError).message ?? null;
 
-        // TODO: Add ErrorOutput component to show error instead of notification
         dispatch({
           type: "RUN_PROMPT_ERROR",
           id: promptId,
@@ -665,25 +805,85 @@ export default function EditorContainer({
     return () => window.removeEventListener("keydown", saveHandler);
   }, [onSave]);
 
+  // Server heartbeat, check every 3s to show error if server is down
+  // Don't poll if server status is in an error state since it won't automatically recover
+  const getServerStatusCallback = callbacks.getServerStatus;
+  useEffect(() => {
+    if (!getServerStatusCallback || serverStatus !== "OK") {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await getServerStatusCallback();
+        setServerStatus(res.status);
+      } catch (err: unknown) {
+        setServerStatus("ERROR");
+      }
+    }, SERVER_HEARTBEAT_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [getServerStatusCallback, serverStatus]);
+
   return (
     <AIConfigContext.Provider value={contextValue}>
       <Notifications />
+      {serverStatus !== "OK" && (
+        <>
+          {/* // Simple placeholder block div to make sure the banner does not overlap page contents until scrolling past its height */}
+          <div style={{ height: "100px" }} />
+          <Alert
+            color="red"
+            title="Server Connection Error"
+            w="100%"
+            style={{ position: "fixed", top: 0, zIndex: 999 }}
+          >
+            <Text>
+              There is a problem with the editor server connection. Please copy
+              important changes somewhere safe and then try reloading the page
+              or restarting the editor.
+            </Text>
+            <Flex align="center">
+              <CopyButton
+                value={JSON.stringify(
+                  clientConfigToAIConfig(aiconfigState),
+                  null,
+                  2
+                )}
+                contentLabel="AIConfig JSON"
+              />
+              <Text color="dimmed">Click to copy current AIConfig JSON</Text>
+            </Flex>
+          </Alert>
+        </>
+      )}
       <Container maw="80rem">
         <Flex justify="flex-end" mt="md" mb="xs">
-          <Tooltip
-            label={isDirty ? "Save changes to config" : "No unsaved changes"}
-          >
-            <div>
+          <Group>
+            <Button
+              loading={undefined}
+              onClick={onClearOutputs}
+              size="xs"
+              variant="gradient"
+            >
+              Clear Outputs
+            </Button>
+
+            <Tooltip
+              label={isDirty ? "Save changes to config" : "No unsaved changes"}
+            >
               <Button
                 leftIcon={<IconDeviceFloppy />}
                 loading={isSaving}
                 onClick={onSave}
                 disabled={!isDirty}
+                size="xs"
+                variant="gradient"
               >
                 Save
               </Button>
-            </div>
-          </Tooltip>
+            </Tooltip>
+          </Group>
         </Flex>
         <ConfigNameDescription
           name={aiconfigState.name}
@@ -716,6 +916,7 @@ export default function EditorContainer({
                   getModels={callbacks.getModels}
                   onChangePromptInput={onChangePromptInput}
                   onChangePromptName={onChangePromptName}
+                  cancel={callbacks.cancel}
                   onRunPrompt={onRunPrompt}
                   onUpdateModel={onUpdatePromptModel}
                   onUpdateModelSettings={onUpdatePromptModelSettings}

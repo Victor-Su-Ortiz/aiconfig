@@ -3,7 +3,7 @@ import PromptInputRenderer from "./prompt_input/PromptInputRenderer";
 import PromptOutputsRenderer from "./prompt_outputs/PromptOutputsRenderer";
 import { ClientPrompt } from "../../shared/types";
 import { getPromptSchema } from "../../utils/promptUtils";
-import { Flex, Card, createStyles } from "@mantine/core";
+import { Flex, Card } from "@mantine/core";
 import { PromptInput as AIConfigPromptInput, JSONObject } from "aiconfig";
 import { memo, useCallback } from "react";
 import PromptOutputBar from "./PromptOutputBar";
@@ -12,6 +12,7 @@ import ModelSelector from "./ModelSelector";
 
 type Props = {
   prompt: ClientPrompt;
+  cancel: (cancellationToken: string) => Promise<void>;
   getModels: (search: string) => Promise<string[]>;
   onChangePromptInput: (
     promptId: string,
@@ -21,7 +22,7 @@ type Props = {
   onRunPrompt(promptId: string): Promise<void>;
   onUpdateModel: (promptId: string, newModel?: string) => void;
   onUpdateModelSettings: (
-    ppromptId: string,
+    promptId: string,
     newModelSettings: JSONObject
   ) => void;
   onUpdateParameters: (
@@ -31,23 +32,9 @@ type Props = {
   defaultConfigModelName?: string;
 };
 
-const useStyles = createStyles((theme) => ({
-  promptInputCard: {
-    flex: 1,
-    borderRight: "0 !important",
-    borderBottomRightRadius: 0,
-    borderTopRightRadius: 0,
-  },
-  actionBar: {
-    border: `1px solid ${theme.colors.gray[3]}`,
-    borderRadius: "0.25em",
-    borderBottomLeftRadius: 0,
-    borderTopLeftRadius: 0,
-  },
-}));
-
 export default memo(function PromptContainer({
   prompt,
+  cancel,
   getModels,
   onChangePromptInput,
   onChangePromptName,
@@ -96,11 +83,9 @@ export default memo(function PromptContainer({
   const promptSchema = getPromptSchema(prompt, defaultConfigModelName);
   const inputSchema = promptSchema?.input;
 
-  const { classes } = useStyles();
-
   return (
     <Flex justify="space-between" w="100%">
-      <Card withBorder className={classes.promptInputCard}>
+      <Card withBorder className="cellStyle">
         <Flex direction="column">
           <Flex justify="space-between" mb="0.5em">
             <PromptName
@@ -124,10 +109,11 @@ export default memo(function PromptContainer({
           {prompt.outputs && <PromptOutputsRenderer outputs={prompt.outputs} />}
         </Flex>
       </Card>
-      <div className={classes.actionBar}>
+      <div className="sidePanel">
         <PromptActionBar
           prompt={prompt}
           promptSchema={promptSchema}
+          cancel={cancel}
           onRunPrompt={runPrompt}
           onUpdateModelSettings={updateModelSettings}
           onUpdateParameters={updateParameters}

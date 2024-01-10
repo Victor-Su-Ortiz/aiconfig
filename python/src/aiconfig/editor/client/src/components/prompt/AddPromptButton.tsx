@@ -1,4 +1,10 @@
-import { ActionIcon, Menu, TextInput } from "@mantine/core";
+import {
+  ActionIcon,
+  Menu,
+  ScrollArea,
+  TextInput,
+  Tooltip,
+} from "@mantine/core";
 import { IconPlus, IconSearch, IconTextCaption } from "@tabler/icons-react";
 import { memo, useCallback, useState } from "react";
 import useLoadModels from "../../hooks/useLoadModels";
@@ -22,7 +28,7 @@ function ModelMenuItems({
   const displayModels = isCollapsed ? models.slice(0, collapseLimit) : models;
 
   return (
-    <>
+    <ScrollArea mah={300} style={{ overflowY: "auto" }}>
       {displayModels.map((model) => (
         <Menu.Item
           key={model}
@@ -35,7 +41,7 @@ function ModelMenuItems({
       {isCollapsed && (
         <Menu.Item onClick={() => setIsCollapsed(false)}>...</Menu.Item>
       )}
-    </>
+    </ScrollArea>
   );
 }
 
@@ -62,9 +68,11 @@ export default memo(function AddPromptButton({ addPrompt, getModels }: Props) {
       onChange={setIsOpen}
     >
       <Menu.Target>
-        <ActionIcon>
-          <IconPlus size={20} />
-        </ActionIcon>
+        <Tooltip label="Add prompt">
+          <ActionIcon>
+            <IconPlus size={20} />
+          </ActionIcon>
+        </Tooltip>
       </Menu.Target>
 
       <Menu.Dropdown>
@@ -79,8 +87,9 @@ export default memo(function AddPromptButton({ addPrompt, getModels }: Props) {
           collapseLimit={5}
           onSelectModel={onAddPrompt}
         />
+        {/* TODO: Add back once we have custom model parsers fully supported
         <Menu.Divider />
-        <Menu.Item icon={<IconPlus size="16" />}>Add New Model</Menu.Item>
+        <Menu.Item icon={<IconPlus size="16" />}>Add New Model</Menu.Item> */}
       </Menu.Dropdown>
     </Menu>
   );

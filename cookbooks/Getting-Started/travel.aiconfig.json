@@ -1,8 +1,10 @@
 {
   "name": "NYC Trip Planner",
-  "description": "Intrepid explorer with ChatGPT and AIConfig",
   "schema_version": "latest",
   "metadata": {
+    "parameters": {
+      "": ""
+    },
     "models": {
       "gpt-3.5-turbo": {
         "model": "gpt-3.5-turbo",
@@ -17,6 +19,7 @@
     },
     "default_model": "gpt-3.5-turbo"
   },
+  "description": "Intrepid explorer with ChatGPT and AIConfig",
   "prompts": [
     {
       "name": "get_activities",
@@ -32,7 +35,6 @@
         }
       }
     }
-  ]
+  ],
+  "$schema": "https://json.schemastore.org/aiconfig-1.0"
 }
-
-

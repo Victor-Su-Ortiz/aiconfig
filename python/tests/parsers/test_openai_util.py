@@ -2,28 +2,34 @@ import openai
 import pytest
 from aiconfig.Config import AIConfigRuntime
 from aiconfig.default_parsers.openai import refine_chat_completion_params
-from aiconfig.schema import (
-    ExecuteResult,
-    OutputDataWithValue,
-    Prompt,
-    PromptInput,
-    PromptMetadata,
-)
 from mock import patch
 
+from aiconfig.schema import ExecuteResult, Prompt, PromptInput, PromptMetadata, ModelMetadata
 
 from ..conftest import mock_openai_chat_completion
 from ..util.file_path_utils import get_absolute_file_path_from_relative
 
 
 def test_refine_chat_completion_params():
-    model_settings_with_stream_and_system_prompt = {
-        "n": "3",
-        "stream": True,
-        "system_prompt": "system_prompt",
-        "random_attribute": "value_doesn't_matter",
-    }
-    refined_params = refine_chat_completion_params(model_settings_with_stream_and_system_prompt)
+    prompt = Prompt(
+        name="test",
+        input="test",
+        metadata=PromptMetadata(
+            model=ModelMetadata(
+                name="gpt-4",
+                settings={
+                    "n": "3",
+                    "stream": True,
+                    "system_prompt": "system_prompt",
+                    "random_attribute": "value_doesn't_matter",
+                },
+            )
+        ),
+    )
+
+    aiconfig = AIConfigRuntime.create(name="test_refine_chat_completion_params", prompts=[prompt])
+
+    refined_params = refine_chat_completion_params(prompt.metadata.model.settings, aiconfig, prompt)
 
     assert "system_prompt" not in refined_params
     assert "stream" in refined_params

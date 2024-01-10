@@ -1,6 +1,8 @@
 import copy
+import dotenv
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
+from result import Result, Ok, Err
 
 if TYPE_CHECKING:
     pass
@@ -10,11 +12,30 @@ if TYPE_CHECKING:
     from ..schema import AIConfig
 
 
-def get_api_key_from_environment(api_key_name: str):
-    if api_key_name not in os.environ:
-        raise Exception("Missing API key '{}' in environment".format(api_key_name))
+def get_api_key_from_environment(
+    api_key_name: str,
+    required: bool = True) -> Result[str | None, str]:
+    """Get the API key if it exists, return None or error if it doesn't
 
-    return os.environ[api_key_name]
+    Args:
+        api_key_name (str): The keyname that we're trying to import from env variable
+        required (bool, optional): If this is true, we raise an error if the 
+            key is not found
+
+    Returns:
+        Union[str, None]: the value of the key. If `required` is false, this can be None
+    """
+    dotenv.load_dotenv()
+    if required:
+        return _get_api_key_from_environment_required(api_key_name)
+    return Ok(os.getenv(api_key_name))
+
+
+def _get_api_key_from_environment_required(api_key_name: str) -> Result[str, str]:
+    try:
+        return Ok(os.environ[api_key_name])
+    except KeyError:
+        return Err(f"Missing API key '{api_key_name}' in environment")
 
 
 def extract_override_settings(config_runtime: "AIConfig", inference_settings: "InferenceSettings", model_id: str):

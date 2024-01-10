@@ -1,9 +1,11 @@
-import ModelSettingsConfigRenderer from "./ModelSettingsConfigRenderer";
 import ModelSettingsSchemaRenderer from "./ModelSettingsSchemaRenderer";
 import { GenericPropertiesSchema } from "../../../utils/promptUtils";
-import { Flex, createStyles } from "@mantine/core";
+import { Flex, Text, createStyles } from "@mantine/core";
 import { JSONObject } from "aiconfig";
-import { memo } from "react";
+import { memo, useState } from "react";
+import JSONRenderer from "../../JSONRenderer";
+import JSONEditorToggleButton from "../../JSONEditorToggleButton";
+import { ErrorBoundary, useErrorBoundary } from "react-error-boundary";
 
 type Props = {
   settings?: JSONObject;
@@ -21,29 +23,83 @@ const useStyles = createStyles(() => ({
   },
 }));
 
+type ErrorFallbackProps = {
+  settings?: JSONObject;
+  toggleJSONEditor: () => void;
+};
+
+function SettingsErrorFallback({
+  settings,
+  toggleJSONEditor,
+}: ErrorFallbackProps) {
+  const { resetBoundary: clearRenderError } = useErrorBoundary();
+  return (
+    <Flex direction="column">
+      <Text color="red" size="sm">
+        <Flex justify="flex-end">
+          <JSONEditorToggleButton
+            isRawJSON={false}
+            setIsRawJSON={() => {
+              clearRenderError();
+              toggleJSONEditor();
+            }}
+          />
+        </Flex>
+        Invalid settings format for model. Toggle JSON editor to update
+      </Text>
+      <JSONRenderer content={settings} />
+    </Flex>
+  );
+}
+
 export default memo(function ModelSettingsRenderer({
   settings,
   schema,
   onUpdateModelSettings,
 }: Props) {
   const { classes } = useStyles();
-  let settingsComponent;
+  const [isRawJSON, setIsRawJSON] = useState(schema == null);
 
-  if (schema) {
-    settingsComponent = (
-      <ModelSettingsSchemaRenderer
-        settings={settings}
-        schema={schema}
-        onUpdateModelSettings={onUpdateModelSettings}
+  const rawJSONToggleButton = (
+    <Flex justify="flex-end">
+      <JSONEditorToggleButton
+        isRawJSON={isRawJSON}
+        setIsRawJSON={setIsRawJSON}
       />
-    );
-  } else if (settings) {
-    settingsComponent = <ModelSettingsConfigRenderer settings={settings} />;
-  }
+    </Flex>
+  );
 
   return (
     <Flex direction="column" className={classes.settingsContainer}>
-      {settingsComponent}
+      {isRawJSON || !schema ? (
+        <>
+          {/* // Only show the toggle if there is a schema to toggle between JSON and custom schema renderer */}
+          {schema && rawJSONToggleButton}
+          <JSONRenderer
+            content={settings}
+            onChange={(val) =>
+              onUpdateModelSettings(val as Record<string, unknown>)
+            }
+            // schema={schema} TODO: Add schema after fixing z-index issue
+          />
+        </>
+      ) : (
+        <ErrorBoundary
+          fallbackRender={() => (
+            <SettingsErrorFallback
+              settings={settings}
+              toggleJSONEditor={() => setIsRawJSON(true)}
+            />
+          )}
+        >
+          {rawJSONToggleButton}
+          <ModelSettingsSchemaRenderer
+            settings={settings}
+            schema={schema}
+            onUpdateModelSettings={onUpdateModelSettings}
+          />
+        </ErrorBoundary>
+      )}
     </Flex>
   );
 });

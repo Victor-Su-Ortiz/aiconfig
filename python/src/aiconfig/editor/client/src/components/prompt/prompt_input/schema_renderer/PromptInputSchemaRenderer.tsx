@@ -27,8 +27,7 @@ function SchemaRenderer({ input, schema, onChangeInput }: SchemaRendererProps) {
   } = schema.properties;
 
   if (typeof input === "string") {
-    return null;
-    // TODO: Add ErrorBoundary handling and throw error here
+    throw new Error("Expected input type object but got string");
   }
 
   const { data, attachments, ..._restData } = input;
@@ -43,16 +42,18 @@ function SchemaRenderer({ input, schema, onChangeInput }: SchemaRendererProps) {
 
   return (
     <Flex direction="column">
-      <DataRenderer
-        schema={dataSchema}
-        data={data}
-        onChangeData={onChangeData}
-      />
+      {dataSchema && (
+        <DataRenderer
+          schema={dataSchema}
+          data={data}
+          onChangeData={onChangeData}
+        />
+      )}
       {attachmentsSchema && (
         <AttachmentsRenderer
           schema={attachmentsSchema}
           onChangeAttachments={onChangeAttachments}
-          attachments={attachments}
+          attachments={attachments ?? []}
         />
       )}
       {/* <JSONRenderer properties={restProperties} data={restData}/> */}
@@ -75,6 +76,7 @@ export default memo(function PromptInputSchemaRenderer(props: Props) {
         value={props.input}
         onChange={(e) => props.onChangeInput(e.target.value)}
         placeholder="Type a prompt"
+        autosize
       />
     );
   } else {

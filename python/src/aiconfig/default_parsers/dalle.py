@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 # TODO: Centralize this into utils function with the HuggingFaceTextParser class
-def refine_image_completion_params(model_settings):
+def refine_image_completion_params(model_settings, aiconfig, prompt):
     """
     Refines the completion params for the Dall-E request API. Removes any unsupported params.
     The supported keys were found by looking at the OpenAI Dall-E API: https://platform.openai.com/docs/api-reference/images/create?lang=python`
@@ -36,6 +36,11 @@ def refine_image_completion_params(model_settings):
     for key in model_settings:
         if key.lower() in supported_keys:
             completion_data[key.lower()] = model_settings[key]
+
+    # Explicitly set the model to use if not already specified
+    if completion_data.get("model") is None:
+        model_name = aiconfig.get_model_name(prompt)
+        completion_data["model"] = model_name
 
     return completion_data
 
@@ -141,11 +146,11 @@ class DalleImageGenerationParser(ParameterizedModelParser):
             dict: Model-specific completion parameters.
         """
         # Get inputs from aiconfig
-        resolved_prompt = resolve_prompt(prompt, params, aiconfig)
+        resolved_prompt = resolve_prompt(prompt, params if params is not None else {}, aiconfig)
         model_settings = self.get_model_settings(prompt, aiconfig)
 
         # Build Completion data
-        completion_data = refine_image_completion_params(model_settings)
+        completion_data = refine_image_completion_params(model_settings, aiconfig, prompt)
         completion_data["prompt"] = resolved_prompt
         return completion_data
 
@@ -163,7 +168,7 @@ class DalleImageGenerationParser(ParameterizedModelParser):
         """
         # If needed, certify the API key and initialize the OpenAI client
         if not openai.api_key:
-            openai.api_key = get_api_key_from_environment("OPENAI_API_KEY")
+            openai.api_key = get_api_key_from_environment("OPENAI_API_KEY").unwrap()
         if not self.client:
             self.client = OpenAI(api_key=openai.api_key)
 

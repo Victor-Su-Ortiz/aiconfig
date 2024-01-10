@@ -3,7 +3,7 @@ import copy
 import io
 import itertools
 import torch
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from diffusers import AutoPipelineForText2Image
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion_xl.pipeline_output import StableDiffusionXLPipelineOutput
@@ -123,7 +123,20 @@ def refine_image_completion_params(unfiltered_completion_params: Dict[str, Any])
     return completion_params
 
 
-def construct_output(image: Image.Image, has_nsfw: Optional[bool], execution_count: int) -> Output:
+class ImageData():
+    """
+    Helper class to store each image response data as fields instead 
+    of separate arrays. See `_refine_responses` for more details
+    """
+    image: Image.Image
+    nsfw_content_detected: bool
+
+    def __init__(self, image: Image.Image, nsfw_content_detected: bool):
+        self.image = image
+        self.nsfw_content_detected = nsfw_content_detected
+
+
+def construct_output(image_data: ImageData, execution_count: int) -> Output:
     """
     Construct output based on the response data
     """
@@ -141,14 +154,14 @@ def construct_output(image: Image.Image, has_nsfw: Optional[bool], execution_cou
 
     data = OutputDataWithStringValue(
         kind="base64",
-        value=pillow_image_to_base64_string(image),
+        value=pillow_image_to_base64_string(image_data.image),
     )
     output = ExecuteResult(
         **{
             "output_type": "execute_result",
             "data": data,
             "execution_count": execution_count,
-            "metadata": {"has_nsfw": has_nsfw},
+            "metadata": {"nsfw_content_detected": image_data.nsfw_content_detected},
             "mime_type": "image/png",
         }
     )
@@ -302,29 +315,26 @@ If that doesn't work, you can also try less computationally intensive models.
 
         completion_data = await self.deserialize(prompt, aiconfig, options, parameters)
         response: Union[StableDiffusionPipelineOutput, StableDiffusionXLPipelineOutput] = generator(**completion_data)
-        has_nsfw_responses = []
+        nsfw_content_detected = []
         if hasattr(response, "nsfw_content_detected"):
             # StableDiffusionPipelineOutput has "nsfw_content_detected" field  but
             # StableDiffusionXLPipelineOutput does not. Both have "images" field
-            has_nsfw_responses = response.nsfw_content_detected
+            nsfw_content_detected = response.nsfw_content_detected
 
         outputs: List[Output] = []
-        refined_responses = refine_responses(response.images or [], has_nsfw_responses)
-        for count, (image, has_nsfw) in enumerate(
-            refined_responses
-            # TODO (rossdanlm): Check if "image" field is present for other image
-            # diffusers other than StableDiffusion and StableDiffusionXL
-            # https://github.com/lastmile-ai/aiconfig/issues/471
-        ):
-            output = construct_output(image, has_nsfw, count)
+        # TODO (rossdanlm): Check if "image" field is present for other image
+        # diffusers other than StableDiffusion and StableDiffusionXL
+        # https://github.com/lastmile-ai/aiconfig/issues/471
+        refined_responses = _refine_responses(response.images or [], nsfw_content_detected)
+        for count, image_data in enumerate(refined_responses):
+            # TODO (rossdanlm): It's possible for image to be of type np.ndarray
+            # Update `construct_output` to process this type.
+            # See StableDiffusionPipelineOutput
+            output = construct_output(image_data, count)
             outputs.append(output)
 
         prompt.outputs = outputs
         return prompt.outputs
-
-    def refine_responses(response_images, has_nsfw_responses):
-        refined_responses = list(itertools.zip_longest(response_images, has_nsfw_responses))
-        return refined_responses
 
     def get_output_text(
         self,
@@ -353,3 +363,35 @@ If that doesn't work, you can also try less computationally intensive models.
         elif torch.backends.mps.is_available():
             return "mps"
         return "cpu"
+
+def _refine_responses(
+    response_images:  List[Image.Image],
+    nsfw_content_detected: List[bool],
+) -> List[ImageData]:
+    """
+    Helper function for taking the separate response data lists (`images` and
+    `nsfw_content_detected`) from StableDiffusionPipelineOutput or 
+    StableDiffusionXLPipelineOutput and merging this data into a single array
+    containing ImageData which stores information at the image-level. This 
+    makes processing later easier since all the data we need is stored in a 
+    single object, so we don't need to compare two separate lists
+
+    Args:
+        response_images List[Image.Image]: List of images
+        nsfw_content_detected List[bool]: List of whether the image at that 
+            corresponding index from `response_images` has detected that it
+            contains nsfw_content. It is possible for this list to be empty
+
+    Returns:
+        List[ImageData]: List containing ImageData, which merges both array
+            information into a single data object
+    """
+    merged_responses: List[Tuple[Image.Image, bool]] = list(
+        # Use zip.longest because nsfw_content_detected can be empty
+        itertools.zip_longest(response_images, nsfw_content_detected)
+    )
+    image_data_objects: List[ImageData] = [
+        ImageData(image=image, nsfw_content_detected=has_nsfw)
+        for (image, has_nsfw) in merged_responses
+    ]
+    return image_data_objects

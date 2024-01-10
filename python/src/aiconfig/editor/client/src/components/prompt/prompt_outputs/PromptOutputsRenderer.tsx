@@ -7,16 +7,24 @@ import {
 } from "aiconfig";
 import { memo } from "react";
 import { TextRenderer } from "../TextRenderer";
-import JSONOutput from "./JSONOutput";
 import PromptOutputWrapper from "./PromptOutputWrapper";
 import MimeTypeRenderer from "../../MimeTypeRenderer";
+import JSONRenderer from "../../JSONRenderer";
+import { Alert, Flex } from "@mantine/core";
 
 type Props = {
   outputs: Output[];
 };
 
 function ErrorOutput({ output }: { output: Error }) {
-  return <div>{output.evalue}</div>;
+  return (
+    <Flex direction="column">
+      <Alert color="red" title={output.ename}>
+        <TextRenderer content={output.evalue} />
+        <TextRenderer content={output.traceback.join("\n")} />
+      </Alert>
+    </Flex>
+  );
 }
 
 const ExecuteResultOutput = memo(function ExecuteResultOutput({
@@ -25,7 +33,7 @@ const ExecuteResultOutput = memo(function ExecuteResultOutput({
   output: ExecuteResult;
 }) {
   if (output.data == null) {
-    return <JSONOutput content={output} />;
+    return <JSONRenderer content={output} />;
   }
 
   if (typeof output.data === "string") {
@@ -75,18 +83,17 @@ const ExecuteResultOutput = memo(function ExecuteResultOutput({
       // TODO: Tool calls rendering
       default:
         return (
-          <JSONOutput
+          <JSONRenderer
             content={(output.data as OutputDataWithToolCallsValue).value}
           />
         );
     }
   }
 
-  return <JSONOutput content={output.data} />;
+  return <JSONRenderer content={output.data} />;
 });
 
 const OutputRenderer = memo(function Output({ output }: { output: Output }) {
-  // TODO: Add toggle for raw JSON renderer
   switch (output.output_type) {
     case "execute_result":
       return <ExecuteResultOutput output={output} />;

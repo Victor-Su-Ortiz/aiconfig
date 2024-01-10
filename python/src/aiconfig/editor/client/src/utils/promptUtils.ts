@@ -3,6 +3,14 @@ import { OpenAIChatModelParserPromptSchema } from "../shared/prompt_schemas/Open
 import { OpenAIChatVisionModelParserPromptSchema } from "../shared/prompt_schemas/OpenAIChatVisionModelParserPromptSchema";
 import { DalleImageGenerationParserPromptSchema } from "../shared/prompt_schemas/DalleImageGenerationParserPromptSchema";
 import { PaLMTextParserPromptSchema } from "../shared/prompt_schemas/PaLMTextParserPromptSchema";
+import { PaLMChatParserPromptSchema } from "../shared/prompt_schemas/PaLMChatParserPromptSchema";
+import { HuggingFaceTextGenerationParserPromptSchema } from "../shared/prompt_schemas/HuggingFaceTextGenerationParserPromptSchema";
+import { AnyscaleEndpointPromptSchema } from "../shared/prompt_schemas/AnyscaleEndpointPromptSchema";
+import { HuggingFaceText2ImageDiffusorPromptSchema } from "../shared/prompt_schemas/HuggingFaceText2ImageDiffusorPromptSchema";
+import { HuggingFaceTextGenerationTransformerPromptSchema } from "../shared/prompt_schemas/HuggingFaceTextGenerationTransformerPromptSchema";
+import { HuggingFaceAutomaticSpeechRecognitionPromptSchema } from "../shared/prompt_schemas/HuggingFaceAutomaticSpeechRecognitionPromptSchema";
+import { HuggingFaceTextSummarizationTransformerPromptSchema } from "../shared/prompt_schemas/HuggingFaceTextSummarizationTransformerPromptSchema";
+import { HuggingFaceImage2TextTransformerPromptSchema } from "../shared/prompt_schemas/HuggingFaceImage2TextTransformerPromptSchema";
 
 /**
  * Get the name of the model for the specified prompt. The name will either be specified in the prompt's
@@ -67,13 +75,29 @@ export const PROMPT_SCHEMAS: Record<string, PromptSchema> = {
   "dall-e-3": DalleImageGenerationParserPromptSchema,
 
   // HuggingFaceTextGenerationParser
-  // "HuggingFaceTextGenerationParser":
+  HuggingFaceTextGenerationParser: HuggingFaceTextGenerationParserPromptSchema,
 
   // PaLMTextParser
   "models/text-bison-001": PaLMTextParserPromptSchema,
 
   // PaLMChatParser
-  // "models/chat-bison-001":
+  "models/chat-bison-001": PaLMChatParserPromptSchema,
+
+  // AnyscaleEndpoint
+  AnyscaleEndpoint: AnyscaleEndpointPromptSchema,
+
+  // Local HuggingFace Parsers
+  HuggingFaceText2ImageDiffusor: HuggingFaceText2ImageDiffusorPromptSchema,
+  TextGeneration: HuggingFaceTextGenerationTransformerPromptSchema,
+  Text2Image: HuggingFaceText2ImageDiffusorPromptSchema,
+  AutomaticSpeechRecognition: HuggingFaceAutomaticSpeechRecognitionPromptSchema,
+  HuggingFaceTextSummarizationTransformer:
+    HuggingFaceTextSummarizationTransformerPromptSchema,
+  HuggingFaceTextTranslationTransformer:
+    HuggingFaceTextGenerationTransformerPromptSchema,
+  HuggingFaceImage2TextTransformer:
+    HuggingFaceImage2TextTransformerPromptSchema,
+  // Text2Speech: HuggingFaceText2SpeechTransformerPromptSchema,
 };
 
 export type PromptInputSchema =
@@ -109,7 +133,7 @@ export type PromptInputObjectAttachmentsSchema = {
 export type PromptInputObjectSchema = {
   type: "object";
   properties: {
-    data: PromptInputObjectDataSchema;
+    data?: PromptInputObjectDataSchema;
     attachments?: PromptInputObjectAttachmentsSchema;
   } & Record<string, JSONObject>;
   required?: string[] | undefined;
@@ -157,4 +181,22 @@ function isTextInputModality(prompt: Prompt): boolean {
 
 export function checkParametersSupported(prompt: Prompt): boolean {
   return prompt.metadata?.parameters != null || isTextInputModality(prompt);
+}
+
+export function getDefaultPromptInputForModel(model: string) {
+  const schema = PROMPT_SCHEMAS[model];
+  if (schema) {
+    if (schema.input.type === "string") {
+      return "";
+    } else {
+      if (schema.input.properties.data) {
+        return {
+          data: schema.input.properties.data.type === "string" ? "" : {},
+        };
+      }
+      return {};
+    }
+  }
+
+  return "";
 }

@@ -1,5 +1,4 @@
 import copy
-import json
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
@@ -161,7 +160,7 @@ class OpenAIInference(ParameterizedModelParser):
         # Build Completion params
         model_settings = self.get_model_settings(prompt, aiconfig)
 
-        completion_params = refine_chat_completion_params(model_settings)
+        completion_params = refine_chat_completion_params(model_settings, aiconfig, prompt)
 
         # In the case thhat the messages array weren't saves as part of the model settings, build it here. Messages array is used for conversation history.
         if not completion_params.get("messages"):
@@ -236,7 +235,7 @@ class OpenAIInference(ParameterizedModelParser):
         )
 
         if not openai.api_key:
-            openai.api_key = get_api_key_from_environment("OPENAI_API_KEY")
+            openai.api_key = get_api_key_from_environment("OPENAI_API_KEY").unwrap()
 
         completion_data = await self.deserialize(prompt, aiconfig, parameters)
         # if stream enabled in runtime options and config, then stream. Otherwise don't stream.
@@ -282,6 +281,7 @@ class OpenAIInference(ParameterizedModelParser):
             for chunk in response:
                 # OpenAI>1.0.0 uses pydantic models. Chunk is of type ChatCompletionChunk; type is not directly importable from openai Library, will require some diffing
                 chunk = chunk.model_dump(exclude_none=True)
+                chunk_without_choices = {key: copy.deepcopy(value) for key, value in chunk.items() if key != "choices"}
                 # streaming only returns one chunk, one choice at a time (before 1.0.0). The order in which the choices are returned is not guaranteed.
                 messages = multi_choice_message_reducer(messages, chunk)
 
@@ -298,11 +298,23 @@ class OpenAIInference(ParameterizedModelParser):
                             "output_type": "execute_result",
                             "data": accumulated_message_for_choice,
                             "execution_count": index,
-                            "metadata": {"finish_reason": choice.get("finish_reason")},
+                            "metadata": chunk_without_choices,
                         }
                     )
                     outputs[index] = output
             outputs = [outputs[i] for i in sorted(list(outputs.keys()))]
+
+            # Now that we have the complete outputs, we can parse it into our object model properly
+            for output in outputs:
+                output_message = output.data
+                output_data = build_output_data(output.data)
+
+                metadata = {"raw_response": output_message}
+                if output_message.get("role", None) is not None:
+                    metadata["role"] = output_message.get("role")
+
+                output.data = output_data
+                output.metadata = {**output.metadata, **metadata}
 
         # rewrite or extend list of outputs?
         prompt.outputs = outputs
@@ -342,8 +354,7 @@ class OpenAIInference(ParameterizedModelParser):
                 if isinstance(output_data.value, str):
                     return output_data.value
                 # If we get here that means it must be of kind tool_calls
-                return json.dumps(output_data.value, indent=2)
-
+                return output_data.model_dump_json(exclude_none=True, indent=2)
             # Doing this to be backwards-compatible with old output format
             # where we used to save the ChatCompletionMessage in output.data
             if isinstance(output_data, ChatCompletionMessage):
@@ -396,10 +407,10 @@ def multi_choice_message_reducer(messages: Union[Dict[int, dict], None], chunk: 
     return messages
 
 
-def refine_chat_completion_params(model_settings):
+def refine_chat_completion_params(model_settings, aiconfig, prompt):
     # completion parameters to be used for openai's chat completion api
     # system prompt handled separately
-    # streaming handled seperatly.
+    # streaming handled separately.
     # Messages array built dynamically and handled separately
     supported_keys = {
         "frequency_penalty",
@@ -414,6 +425,8 @@ def refine_chat_completion_params(model_settings):
         "stop",
         "stream",
         "temperature",
+        "tools",
+        "tool_choice",
         "top_p",
         "user",
     }
@@ -422,6 +435,11 @@ def refine_chat_completion_params(model_settings):
     for key in supported_keys:
         if key in model_settings:
             completion_data[key] = model_settings[key]
+
+    # Explicitly set the model to use if not already specified
+    if completion_data.get("model") is None:
+        model_name = aiconfig.get_model_name(prompt)
+        completion_data["model"] = model_name
 
     return completion_data
 
@@ -474,7 +492,7 @@ def add_prompt_as_message(prompt: Prompt, aiconfig: "AIConfigRuntime", messages:
                     if isinstance(output_data.value, str):
                         content = output_data.value
                     elif output_data.kind == "tool_calls":
-                        assert isinstance(output, OutputDataWithToolCallsValue)
+                        assert isinstance(output_data, OutputDataWithToolCallsValue)
                         function_call = output_data.value[len(output_data.value) - 1].function
 
                 output_message["content"] = content
@@ -515,24 +533,29 @@ def build_output_data(
         return None
 
     output_data: Union[OutputDataWithValue, str, None] = None
-    if message.get("content") is not None:
+    if message.get("content") is not None and message.get("content") != "":
         output_data = message.get("content")  # string
     elif message.get("tool_calls") is not None:
-        tool_calls = [
-            ToolCallData(
-                id=item.id,
-                function=FunctionCallData(
-                    arguments=item.function.arguments,
-                    name=item.function.name,
-                ),
-                type="function",
+        tool_calls = []
+        for item in message.get("tool_calls"):
+            tool_call_type = item.get("type")
+            if tool_call_type != "function":
+                # It's possible that ChatCompletionMessageToolCall may
+                # support more than just function calls in the future
+                # so filter out other types of tool calls for now
+                continue
+
+            function = item.get("function")
+            tool_calls.append(
+                ToolCallData(
+                    id=item.get("id"),
+                    function=FunctionCallData(
+                        arguments=function.get("arguments"),
+                        name=function.get("name"),
+                    ),
+                    type=tool_call_type,
+                )
             )
-            for item in message.get("tool_calls")
-            # It's possible that ChatCompletionMessageToolCall may
-            # support more than just function calls in the future
-            # so filter out other types
-            if item.type == "function"
-        ]
         output_data = OutputDataWithToolCallsValue(
             kind="tool_calls",
             value=tool_calls,
